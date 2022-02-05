@@ -191,6 +191,7 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
                 reason.code === 'ERR_REQUEST_ABORTED' ||
                 (reason.response || {}).status === 500 ||
                 (reason.response || {}).status === 502 ||
+                (reason.response || {}).status === 503 ||
                 (reason.response || {}).status === 504
             ) {
                 console.log('Failed with proxy', proxy.key, ', retry');
