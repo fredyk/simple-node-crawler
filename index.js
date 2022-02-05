@@ -94,50 +94,50 @@ async function getNextProxy() {
     let error;
     let httpAgent, httpsAgent;
     let currentProxy;
-    do {
-        if (Object.keys(proxies.good).length < 4) {
-            await getProxies();
-        }
+    // do {
+    //     if (Object.keys(proxies.good).length < 4) {
+    //         await getProxies();
+    //     }
         currentProxy = getRandomProxyKey();
-        while (gettingProxy[currentProxy]) {
-            await delay(67);
-        }
-        gettingProxy[currentProxy] = true;
-        if (!proxies.good[currentProxy]) {
-            error = true;
-            continue;
-        }
-        proxyAsSt = `${proxies.good[currentProxy].protocols[0]}://${proxies.good[currentProxy].ip}:${proxies.good[currentProxy].port}`;
-
-        if (!proxies.good[currentProxy].checked) {
-            console.log('Testing proxy', currentProxy, ", total =", Object.keys(proxies.good).length);
-
-            const response = await axios.get('https://api.ipify.org?format=json', {
-                proxy: {
-                    host: proxies.good[currentProxy].ip,
-                    port: proxies.good[currentProxy].port,
-                },
-                json: true,
-                timeout: 30000,
-            }).catch(reason => {
-                console.log('PROXY ERROR: ', proxyAsSt, reason.name, reason.message);
-                error = reason;
-                return {error: reason}
-            });
-            if (!response.data || !response.data.ip) {
-                error = true;
-                proxies.bad[currentProxy] = proxies.good[currentProxy];
-                delete proxies.good[currentProxy];
-            } else {
-                error = false;
-                proxies.good[currentProxy].checked = true;
-                console.log(`Proxy [${currentProxy}]${proxyAsSt} is OK`);
-            }
-            saveProxies();
-        }
-        delete gettingProxy[currentProxy];
-
-    } while (error || !proxies.good[currentProxy]);
+    //     while (gettingProxy[currentProxy]) {
+    //         await delay(67);
+    //     }
+    //     gettingProxy[currentProxy] = true;
+    //     if (!proxies.good[currentProxy]) {
+    //         error = true;
+    //         continue;
+    //     }
+    //     proxyAsSt = `${proxies.good[currentProxy].protocols[0]}://${proxies.good[currentProxy].ip}:${proxies.good[currentProxy].port}`;
+    //
+    //     // if (!proxies.good[currentProxy].checked) {
+    //     //     console.log('Testing proxy', currentProxy, ", total =", Object.keys(proxies.good).length);
+    //     //
+    //     //     const response = await axios.get('https://api.ipify.org?format=json', {
+    //     //         proxy: {
+    //     //             host: proxies.good[currentProxy].ip,
+    //     //             port: proxies.good[currentProxy].port,
+    //     //         },
+    //     //         json: true,
+    //     //         timeout: 30000,
+    //     //     }).catch(reason => {
+    //     //         console.log('PROXY ERROR: ', proxyAsSt, reason.name, reason.message);
+    //     //         error = reason;
+    //     //         return {error: reason}
+    //     //     });
+    //     //     if (!response.data || !response.data.ip) {
+    //     //         error = true;
+    //     //         proxies.bad[currentProxy] = proxies.good[currentProxy];
+    //     //         delete proxies.good[currentProxy];
+    //     //     } else {
+    //     //         error = false;
+    //     //         proxies.good[currentProxy].checked = true;
+    //     //         console.log(`Proxy [${currentProxy}]${proxyAsSt} is OK`);
+    //     //     }
+    //     //     saveProxies();
+    //     // }
+    //     delete gettingProxy[currentProxy];
+    //
+    // } while (error || !proxies.good[currentProxy]);
     proxies.good[currentProxy].key = proxies.good[currentProxy].key || currentProxy
     return {proxy: proxies.good[currentProxy], httpAgent, httpsAgent};
 }
@@ -179,6 +179,7 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
                 reason.code === 'ECONNREFUSED' ||
                 reason.code === 'ECONNRESET' ||
 
+                (reason.response || {}).status === 501 ||
                 (reason.response || {}).status === 400 ||
                 (reason.response || {}).status === 403
             ) {
@@ -188,13 +189,14 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
                 saveProxies();
                 reTry = true;
             } else if (
+                reason.message.indexOf('timeout of ') !== -1 ||
                 reason.code === 'ERR_REQUEST_ABORTED' ||
                 (reason.response || {}).status === 500 ||
                 (reason.response || {}).status === 502 ||
                 (reason.response || {}).status === 503 ||
                 (reason.response || {}).status === 504
             ) {
-                console.log('Failed with proxy', proxy.key, ', retry');
+                console.log('Failed with proxy', proxy.key, reason.message, ', retry');
                 reTry = true;
             } else {
                 return errorHandler(reason);
