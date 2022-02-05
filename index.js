@@ -181,14 +181,9 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
 
                 (reason.response || {}).status === 501 ||
                 (reason.response || {}).status === 400 ||
-                (reason.response || {}).status === 403
-            ) {
-                console.log('Discard proxy', proxy.key, 'for:', reason.message);
-                proxies.bad[proxy.key] = proxy;
-                delete proxies.good[proxy.key];
-                saveProxies();
-                reTry = true;
-            } else if (
+                (reason.response || {}).status === 403 ||
+                (reason.response || {}).status === 404 ||
+
                 reason.message.indexOf('timeout of ') !== -1 ||
                 reason.message.indexOf('error request aborted ') !== -1 ||
                 reason.code === 'ERR_REQUEST_ABORTED' ||
@@ -197,12 +192,29 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
                 (reason.response || {}).status === 503 ||
                 (reason.response || {}).status === 504
             ) {
-                console.log('Failed with proxy', proxy.key, reason.message, ', retry');
+                console.log('Discard proxy', proxy.key, 'for:', reason.message);
+                proxies.bad[proxy.key] = proxy;
+                delete proxies.good[proxy.key];
+                saveProxies();
                 reTry = true;
+            // } else if (
+            //     reason.message.indexOf('timeout of ') !== -1 ||
+            //     reason.message.indexOf('error request aborted ') !== -1 ||
+            //     reason.code === 'ERR_REQUEST_ABORTED' ||
+            //     (reason.response || {}).status === 500 ||
+            //     (reason.response || {}).status === 502 ||
+            //     (reason.response || {}).status === 503 ||
+            //     (reason.response || {}).status === 504
+            // ) {
+            //     console.log('Failed with proxy', proxy.key, reason.message, ', retry');
+            //     reTry = true;
             } else {
                 return errorHandler(reason);
             }
         });
+        if (response && (response.data || '').startsWith('<pre>Array')) {
+            reTry = true;
+        }
         if (reTry) {
             await delay(1000);
         }
@@ -219,13 +231,11 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
 }
 
 function processHtml($, outResults, listSelector, itemHandler) {
-    const allTopics = listSelector($);
-    let index = 0;
-    allTopics.each(function () {
-        itemHandler.call(this, $, $(this), outResults, index);
-
-        index++;
-    });
+    const items = listSelector($);
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        itemHandler.call(this, $, $(item), outResults, i);
+    }
 
     return outResults;
 }
