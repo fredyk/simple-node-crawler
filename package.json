@@ -7,5 +7,12 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^0.25.0",
+    "axios-socks5-agent": "^1.0.5",
+    "cheerio": "^1.0.0-rc.10",
+    "delay": "^5.0.0",
+    "https": "^1.0.0"
+  }
 }
