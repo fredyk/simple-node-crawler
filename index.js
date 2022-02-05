@@ -67,8 +67,14 @@ async function getProxies() {
 
 }
 
+let saving = false;
 function saveProxies() {
+    if (saving) {
+        return setTimeout(saveProxies, 67);
+    }
+    saving = true;
     fs.writeFileSync("data/known_proxies.json", JSON.stringify(proxies, null, 2), {encoding: "utf-8"});
+    saving = false;
 }
 
 async function getNextProxy() {
@@ -133,6 +139,7 @@ async function getNextProxy() {
         }
 
     } while (error || !proxies[currentProxy]);
+    proxies[currentProxy].key = proxies[currentProxy].key || currentProxy
     return {proxy: proxies[currentProxy], httpAgent, httpsAgent};
 }
 
@@ -175,9 +182,15 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
                 (reason.response || {}).status === 400 ||
                 (reason.response || {}).status === 403
             ) {
-                delete proxy.key;
+                console.log('Discard proxy', proxy.key, 'for:', reason.message);
+                delete proxies[proxy.key];
+                saveProxies();
                 reTry = true;
-            } else if ((reason.response || {}).status === 500) {
+            } else if (
+                reason.code === 'ERR_REQUEST_ABORTED' ||
+                (reason.response || {}).status === 500
+            ) {
+                console.log('Failed with proxy', proxy.key, ', retry');
                 reTry = true;
             } else {
                 return errorHandler(reason);
