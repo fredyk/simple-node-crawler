@@ -8,17 +8,16 @@ const https = require('https');
 const SocksAgent = require('axios-socks5-agent');
 const fs = require("fs");
 
-let proxies = [
-    // {
+let proxies = {
+    // "socks5://192.168.0.13:9050": {
+    //     key: "0",
     //     ip: '192.168.0.13',
     //     port: '9050',
     //     protocols: ['socks5']
     // }
-];
-let currentProxy = 0;
+};
 if (fs.existsSync("data/known_proxies.json")) {
     proxies = JSON.parse(fs.readFileSync("data/known_proxies.json", {encoding: "utf-8"}));
-    currentProxy = proxies.length - 1;
 }
 
 async function getProxies() {
@@ -53,23 +52,23 @@ async function getProxies() {
             const https = https$.text().trim();
 
             if (https === 'yes') {
-                outResults.push({
+                let proxy = {
                     ip,
                     port,
                     protocols: ['https']
-                });
+                };
+                proxy.key = `${proxy.protocols[0]}://${proxy.ip}:${proxy.port}`;
+                outResults[proxy.key] = proxy;
             }
 
         }, reason => {
             console.error(reason);
         }, true)
 
-    currentProxy = proxies.length - 1;
-
 }
 
 function saveProxies() {
-    fs.writeFileSync("data/known_proxies.json", JSON.stringify(proxies), {encoding: "utf-8"});
+    fs.writeFileSync("data/known_proxies.json", JSON.stringify(proxies, null, 2), {encoding: "utf-8"});
 }
 
 async function getNextProxy() {
@@ -79,10 +78,12 @@ async function getNextProxy() {
     let proxyAsSt;
     let error;
     let httpAgent, httpsAgent;
+    let currentProxy;
     do {
         if (!proxies.length) {
             await getProxies();
         }
+        currentProxy = getRandomProxyKey();
         proxyAsSt = `${proxies[currentProxy].protocols[0]}://${proxies[currentProxy].ip}:${proxies[currentProxy].port}`;
 
         ({httpAgent, httpsAgent} = SocksAgent({
@@ -96,6 +97,7 @@ async function getNextProxy() {
             // username: 'admin',
             // password: 'pass1234',
         }));
+
         if (!proxies[currentProxy].checked) {
             console.log('Testing proxy', currentProxy);
 
@@ -113,6 +115,7 @@ async function getNextProxy() {
                 // rejectUnauthorized:false,
                 // strictSSL: false,
                 // httpAgent, httpsAgent
+                timeout: 30000,
             }).catch(reason => {
                 console.log('PROXY ERROR: ', proxyAsSt, reason.name, reason.message);
                 error = reason;
@@ -120,18 +123,24 @@ async function getNextProxy() {
             });
             if (!response.data || !response.data.ip) {
                 error = true;
-                proxies.splice(currentProxy, 1);
-                currentProxy--;
+                delete proxies[currentProxy];
             } else {
                 error = false;
                 proxies[currentProxy].checked = true;
+                console.log(`Proxy [${currentProxy}]${proxyAsSt} is OK`);
             }
             saveProxies();
         }
 
     } while (error);
-    return {proxy: proxyAsSt, httpAgent, httpsAgent};
+    return {proxy: proxies[currentProxy], httpAgent, httpsAgent};
 }
+
+function getRandomProxyKey() {
+    let randomIndex = Math.floor(Math.random() * Object.keys(proxies).length);
+    return Object.keys(proxies)[randomIndex];
+}
+
 async function requestAndProcessPage(url, options, outResults, listSelector, itemHandler, errorHandler, skipProxy = false) {
     let proxy, httpAgent, httpsAgent;
     let reTry = false;
@@ -146,8 +155,8 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
             ...options,
             // proxy,
             proxy: !skipProxy ? {
-                host: proxies[currentProxy].ip,
-                port: proxies[currentProxy].port,
+                host: proxy.key.ip,
+                port: proxy.key.port,
             } : undefined,
             // httpsAgent: new https.Agent({
             //     rejectUnauthorized: false
@@ -159,13 +168,10 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
         }).catch(reason => {
             if (
                 reason.message.indexOf(':SSL ') !== -1 ||
-                reason.message.indexOf('ETIMEDOUT') !== -1 ||
-                reason.message.indexOf('ECONNRESET') !== -1
+                reason.code === 'ETIMEDOUT' ||
+                reason.code === 'ECONNRESET'
             ) {
-                // proxies.splice(currentProxy, 1);
-                proxies.splice(0, proxies.length);
-                // currentProxy = 0;
-                // saveProxies();
+                delete proxy.key;
                 reTry = true;
             } else {
                 return errorHandler(reason);
