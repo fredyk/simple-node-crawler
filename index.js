@@ -190,6 +190,7 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
                 reTry = true;
             } else if (
                 reason.message.indexOf('timeout of ') !== -1 ||
+                reason.message.indexOf('error request aborted ') !== -1 ||
                 reason.code === 'ERR_REQUEST_ABORTED' ||
                 (reason.response || {}).status === 500 ||
                 (reason.response || {}).status === 502 ||
