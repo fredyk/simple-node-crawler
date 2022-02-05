@@ -8,7 +8,7 @@ const https = require('https');
 const SocksAgent = require('axios-socks5-agent');
 const fs = require("fs");
 
-let proxies = {
+const proxies = {
     // "socks5://192.168.0.13:9050": {
     //     key: "0",
     //     ip: '192.168.0.13',
@@ -17,7 +17,7 @@ let proxies = {
     // }
 };
 if (fs.existsSync("data/known_proxies.json")) {
-    proxies = JSON.parse(fs.readFileSync("data/known_proxies.json", {encoding: "utf-8"}));
+    Object.assign(proxies, JSON.parse(fs.readFileSync("data/known_proxies.json", {encoding: "utf-8"})));
 }
 
 async function getProxies() {
@@ -72,7 +72,7 @@ function saveProxies() {
 }
 
 async function getNextProxy() {
-    if (!proxies.length) {
+    if (!Object.keys(proxies).length) {
         await getProxies();
     }
     let proxyAsSt;
@@ -80,7 +80,7 @@ async function getNextProxy() {
     let httpAgent, httpsAgent;
     let currentProxy;
     do {
-        if (!proxies.length) {
+        if (!Object.keys(proxies).length) {
             await getProxies();
         }
         currentProxy = getRandomProxyKey();
@@ -99,7 +99,7 @@ async function getNextProxy() {
         }));
 
         if (!proxies[currentProxy].checked) {
-            console.log('Testing proxy', currentProxy);
+            console.log('Testing proxy', currentProxy, ", total =", Object.keys(proxies).length);
 
             const response = await axios.get('https://api.ipify.org?format=json', {
                 // proxy: proxyAsSt,
@@ -132,7 +132,7 @@ async function getNextProxy() {
             saveProxies();
         }
 
-    } while (error);
+    } while (error || !proxies[currentProxy]);
     return {proxy: proxies[currentProxy], httpAgent, httpsAgent};
 }
 
@@ -155,8 +155,8 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
             ...options,
             // proxy,
             proxy: !skipProxy ? {
-                host: proxy.key.ip,
-                port: proxy.key.port,
+                host: proxy.ip,
+                port: proxy.port,
             } : undefined,
             // httpsAgent: new https.Agent({
             //     rejectUnauthorized: false
@@ -169,14 +169,23 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
             if (
                 reason.message.indexOf(':SSL ') !== -1 ||
                 reason.code === 'ETIMEDOUT' ||
-                reason.code === 'ECONNRESET'
+                reason.code === 'ECONNREFUSED' ||
+                reason.code === 'ECONNRESET' ||
+
+                (reason.response || {}).status === 400 ||
+                (reason.response || {}).status === 403
             ) {
                 delete proxy.key;
+                reTry = true;
+            } else if ((reason.response || {}).status === 500) {
                 reTry = true;
             } else {
                 return errorHandler(reason);
             }
         });
+        if (reTry) {
+            await delay(1000);
+        }
     } while (reTry)
     // await delay(5000 + Math.random() * 1000);
 
