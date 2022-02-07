@@ -276,7 +276,7 @@ setInterval((() => {
     let maxGoodHits = 0;
     let minHitDelta = 0;
     let maxHitDelta = 0;
-    let avgScore = 0;
+    let threshold = 0;
     return () => {
         let found = false;
         let localMaxGoodHits = 0;
@@ -284,16 +284,46 @@ setInterval((() => {
         let localMaxHitDelta = -1e6;
         let localAvgScore = 0;
         let countForAvgScore = 0;
+
+        for (const type of ['good', 'bad']) {
+            for (const [key, proxy] of Object.entries(proxies[type])) {
+                let score = 0;
+                if (typeof proxy.goodHits !== "undefined" && typeof proxy.badHits !== "undefined") {
+                    localMaxGoodHits = Math.max(localMaxGoodHits, proxy.goodHits);
+                    let hitDelta = 0;
+                    hitDelta = proxy.goodHits - proxy.badHits;
+                    localMinHitDelta = Math.min(localMinHitDelta, hitDelta);
+                    localMaxHitDelta = Math.max(localMaxHitDelta, hitDelta);
+                    if (maxGoodHits && minHitDelta && maxHitDelta) {
+                        let biasedDelta = hitDelta;
+                        let biasedMaxDelta = maxHitDelta;
+                        if (minHitDelta < 0) {
+                            biasedDelta = hitDelta + Math.abs(minHitDelta);
+                            biasedMaxDelta = maxHitDelta + Math.abs(minHitDelta);
+                        }
+                        score = proxy.goodHits / maxGoodHits * 0.5 + biasedDelta / biasedMaxDelta * 0.5;
+                        updateProxy(key, {$set: {score: score}});
+                        countForAvgScore++;
+                        localAvgScore = (localAvgScore * (countForAvgScore - 1) + score) / countForAvgScore;
+                    }
+                }
+
+            }
+        }
+        maxGoodHits = localMaxGoodHits;
+        minHitDelta = localMinHitDelta;
+        maxHitDelta = localMaxHitDelta;
+        if (localAvgScore) {
+            threshold = localAvgScore * 0.5 + 0.5;
+        }
+
         for (const [key, proxy] of Object.entries(proxies.good)) {
 
             let score = 0;
             if (proxy.goodHits) {
-                localMaxGoodHits = Math.max(localMaxGoodHits, proxy.goodHits);
                 let hitDelta = 0;
                 if (typeof proxy.badHits !== "undefined") {
                     hitDelta = proxy.goodHits - proxy.badHits;
-                    localMinHitDelta = Math.min(localMinHitDelta, hitDelta);
-                    localMaxHitDelta = Math.max(localMaxHitDelta, hitDelta);
                 }
                 if (maxGoodHits && minHitDelta && maxHitDelta) {
                     let biasedDelta = hitDelta;
@@ -304,20 +334,14 @@ setInterval((() => {
                     }
                     score = proxy.goodHits / maxGoodHits * 0.5 + biasedDelta / biasedMaxDelta * 0.5;
                     updateProxy(key, {$set: {score: score}});
-                    countForAvgScore++;
-                    localAvgScore = (localAvgScore * (countForAvgScore - 1) + score) / countForAvgScore;
                 }
             }
 
-            if (avgScore && score < avgScore && Math.random() >= 0.9) {
+            if (threshold && score < threshold && Math.random() >= 0.0) {
                 moveToBadProxy(key);
                 found = true;
             }
         }
-        maxGoodHits = localMaxGoodHits;
-        minHitDelta = localMinHitDelta;
-        maxHitDelta = localMaxHitDelta;
-        avgScore = localAvgScore;
         for (const [key, proxy] of Object.entries(proxies.bad)) {
 
             let score = 0;
@@ -325,8 +349,6 @@ setInterval((() => {
             let hitDelta = 0;
             if (typeof proxy.goodHits !== "undefined" && typeof proxy.badHits !== "undefined") {
                 hitDelta = proxy.goodHits - proxy.badHits;
-                localMinHitDelta = Math.min(localMinHitDelta, hitDelta);
-                localMaxHitDelta = Math.max(localMaxHitDelta, hitDelta);
                 if (maxGoodHits && minHitDelta && maxHitDelta) {
                     let biasedDelta = hitDelta;
                     let biasedMaxDelta = maxHitDelta;
@@ -339,7 +361,7 @@ setInterval((() => {
                 }
             }
 
-            if (avgScore && score >= avgScore || typeof proxy.goodHits !== "undefined" && Math.random() < 0.001) {
+            if (threshold && score >= threshold || typeof proxy.goodHits !== "undefined" && Math.random() < 0.001) {
                 moveToGoodProxy(key);
                 found = true;
             }
