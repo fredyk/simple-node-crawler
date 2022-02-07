@@ -1,61 +1,118 @@
 "use strict";
 
-// const rp = require("request-promise-native");
 const axios = require("axios");
 const delay = require("delay");
 const cheerio = require("cheerio");
-const https = require('https');
-const SocksAgent = require('axios-socks5-agent');
 const fs = require("fs");
+const debug = require('debug')('simple-node-crawler:main');
 
 const proxies = {
     good: {},
     bad: {},
-    // "socks5://192.168.0.13:9050": {
-    //     key: "0",
-    //     ip: '192.168.0.13',
-    //     port: '9050',
-    //     protocols: ['socks5']
-    // }
 };
 if (fs.existsSync("data/known_proxies.json")) {
     Object.assign(proxies, JSON.parse(fs.readFileSync("data/known_proxies.json", {encoding: "utf-8"})));
 }
 
+function addProxy(proxy) {
+    // proxy = {
+    //     ...proxy,
+    //     lastCheck: Date.now(),
+    //     // enqueuedTimes: 1
+    // }
+    proxy.key = `${proxy.protocols[0]}://${proxy.ip}:${proxy.port}`;
+    const proxyKey = proxy.key;
+    // if (proxies.bad[proxyKey]) {
+    //     return;
+    // }
+    // if (proxies.bad[proxyKey]) {
+    //     if ((proxies.bad[proxyKey].lastCheck || 0) < (Date.now() - 15000)) {
+    //         moveToGoodProxy(proxyKey);
+    //         Object.assign(proxies.good[proxyKey], proxy);
+    //         proxies.good[proxyKey].enqueuedTimes = (proxies.good[proxyKey].enqueuedTimes || 0) + 1;
+    //     } else {
+    //         // Still bad proxy
+    //     }
+    // } else {
+    //     proxies.good[proxyKey] = proxies.good[proxyKey] || {};
+    //     Object.assign(proxies.good[proxyKey], proxy);
+    // }
+    moveToGoodProxy(proxyKey);
+    proxies.good[proxyKey] = proxies.good[proxyKey] || {};
+    if (proxies.good[proxyKey]) {
+        Object.assign(proxies.good[proxyKey], proxy);
+        updateProxy(proxyKey, {$inc: {enqueuedTimes: 1}, $set: {lastCheck: Date.now()}})
+    }
+}
+
+function updateProxy(key, atomicUpdate) {
+    for (const [operator, payload] of Object.entries(atomicUpdate)) {
+        switch (operator) {
+            case '$inc':
+                for (const [subKey, value] of Object.entries(payload)) {
+                    if (proxies.good[key]) {
+                        proxies.good[key][subKey] = proxies.good[key][subKey] || 0;
+                        proxies.good[key][subKey] += value;
+                    } else if (proxies.bad[key]) {
+                        proxies.bad[key][subKey] = proxies.bad[key][subKey] || 0;
+                        proxies.bad[key][subKey] += value;
+                    }
+                }
+                break;
+            case '$set':
+                if (proxies.good[key]) {
+                    Object.assign(proxies.good[key], payload);
+                } else if (proxies.bad[key]) {
+                    Object.assign(proxies.bad[key], payload);
+                }
+                break;
+        }
+    }
+}
+
+function moveToBadProxy(key) {
+    if (proxies.good[key]) {
+        proxies.bad[key] = proxies.bad[key] || {};
+        Object.assign(proxies.bad[key], proxies.good[key]);
+        delete proxies.good[key];
+    }
+}
+
+function moveToGoodProxy(proxyKey) {
+    if (proxies.bad[proxyKey]) {
+        proxies.good[proxyKey] = proxies.good[proxyKey] || {};
+        Object.assign(proxies.good[proxyKey], proxies.bad[proxyKey]);
+        delete proxies.bad[proxyKey]
+    }
+}
+
 async function getProxies() {
-    console.log('Requesting new proxies');
+    debug('Requesting new proxies');
 
-    function addProxy(proxy) {
-        proxy = {
-            ...proxy,
-            lastCheck: Date.now()
-        }
-        proxy.key = `${proxy.protocols[0]}://${proxy.ip}:${proxy.port}`;
-        if (proxies.bad[proxy.key] && (proxies.bad[proxy.key].lastCheck || 0) < (Date.now() - 15000)) {
-            delete proxies.bad[proxy.key]
-        }
-        if (!proxies.bad[proxy.key]) {
-            proxies.good[proxy.key] = proxy;
-        }
-    }
 
-    // // const response = await axios.get("https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=socks5", {
-    const response = await axios.get("https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=https", {
-    // // const response = await axios.get("https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=http%2Chttps", {
-    //     resolveWithFullResponse: true,
-        json: true,
-    }).catch(reason => {
-        console.error(reason);
-        return {error: reason};
-    });
+    let page = 1;
+    let data, total, limit;
+    do {
+        // // const response = await axios.get("https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=socks5", {
+        const response = await axios.get(`https://proxylist.geonode.com/api/proxy-list?limit=50&page=${page}&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=https`, {
+            // // const response = await axios.get("https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=http%2Chttps", {
+            json: true,
+        }).catch(reason => {
+            console.log('ERROR while getting PROXY page', page, ':', reason.code, reason.message);
+            return {error: reason};
+        });
 
-    const {data, total, page, limit} = response.data;
-    for (let i = 0; i < data.length; i++) {
-        const proxyData = data[i];
-        // console.log(proxyData);
-        // proxies.push(proxyData);
-        addProxy(proxyData);
-    }
+        data = [];
+        if (response && response.data) {
+
+            ({data, total/*, page*/, limit} = response.data);
+            for (let i = 0; i < data.length; i++) {
+                const proxyData = data[i];
+                addProxy(proxyData);
+            }
+        }
+        page++;
+    } while (data.length >= 50)
 
     await requestAndProcessPage('https://free-proxy-list.net/', {}, proxies, $ => $('#list > div > div.table-responsive > div > table > tbody > tr'),
         function ($, listItem$, _, index) {
@@ -84,6 +141,7 @@ async function getProxies() {
 }
 
 let saving = false;
+
 function saveProxies() {
     if (saving) {
         return setTimeout(saveProxies, 67);
@@ -93,61 +151,18 @@ function saveProxies() {
     saving = false;
 }
 
-const gettingProxy = {};
 async function getNextProxy() {
     if (Object.keys(proxies.good).length < 4) {
         await getProxies();
     }
-    let proxyAsSt;
-    let error;
-    let httpAgent, httpsAgent;
-    let currentProxy;
-    // do {
-    //     if (Object.keys(proxies.good).length < 4) {
-    //         await getProxies();
-    //     }
-        currentProxy = getRandomProxyKey();
-    //     while (gettingProxy[currentProxy]) {
-    //         await delay(67);
-    //     }
-    //     gettingProxy[currentProxy] = true;
-    //     if (!proxies.good[currentProxy]) {
-    //         error = true;
-    //         continue;
-    //     }
-    //     proxyAsSt = `${proxies.good[currentProxy].protocols[0]}://${proxies.good[currentProxy].ip}:${proxies.good[currentProxy].port}`;
-    //
-    //     // if (!proxies.good[currentProxy].checked) {
-    //     //     console.log('Testing proxy', currentProxy, ", total =", Object.keys(proxies.good).length);
-    //     //
-    //     //     const response = await axios.get('https://api.ipify.org?format=json', {
-    //     //         proxy: {
-    //     //             host: proxies.good[currentProxy].ip,
-    //     //             port: proxies.good[currentProxy].port,
-    //     //         },
-    //     //         json: true,
-    //     //         timeout: 30000,
-    //     //     }).catch(reason => {
-    //     //         console.log('PROXY ERROR: ', proxyAsSt, reason.name, reason.message);
-    //     //         error = reason;
-    //     //         return {error: reason}
-    //     //     });
-    //     //     if (!response.data || !response.data.ip) {
-    //     //         error = true;
-    //     //         proxies.bad[currentProxy] = proxies.good[currentProxy];
-    //     //         delete proxies.good[currentProxy];
-    //     //     } else {
-    //     //         error = false;
-    //     //         proxies.good[currentProxy].checked = true;
-    //     //         console.log(`Proxy [${currentProxy}]${proxyAsSt} is OK`);
-    //     //     }
-    //     //     saveProxies();
-    //     // }
-    //     delete gettingProxy[currentProxy];
-    //
-    // } while (error || !proxies.good[currentProxy]);
-    // proxies.good[currentProxy].key = proxies.good[currentProxy].key || currentProxy
-    return {proxy: proxies.good[currentProxy], httpAgent, httpsAgent};
+    let proxy;
+    do {
+        let currentProxy = getRandomProxyKey();
+        proxy = proxies.good[currentProxy];
+        if (proxy) {
+            return {proxy: proxy};
+        }
+    } while (!proxy)
 }
 
 function getRandomProxyKey() {
@@ -156,6 +171,7 @@ function getRandomProxyKey() {
 }
 
 async function requestAndProcessPage(url, options, outResults, listSelector, itemHandler, errorHandler, skipProxy = false) {
+    const init = Date.now();
     let proxy, httpAgent, httpsAgent;
     let reTry = false;
 
@@ -167,18 +183,10 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
         }
         response = await axios.get(url, {
             ...options,
-            // proxy,
             proxy: !skipProxy ? {
                 host: proxy.ip,
                 port: proxy.port,
             } : undefined,
-            // httpsAgent: new https.Agent({
-            //     rejectUnauthorized: false
-            // }),
-            // rejectUnauthorized:false,
-            // strictSSL: false,
-            // resolveWithFullResponse: true,
-            // httpAgent, httpsAgent,
             timeout: 30000,
         }).catch(reason => {
             if (
@@ -187,6 +195,11 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
                     reason.code === 'ETIMEDOUT' ||
                     reason.code === 'ECONNREFUSED' ||
                     reason.code === 'ECONNRESET' ||
+                    reason.code === 'ECONNABORTED' ||
+                    reason.code === 'EADDRNOTAVAIL' ||
+                    reason.code === 'ENETUNREACH' ||
+                    reason.code === 'HPE_INVALID_CONSTANT' ||
+                    reason.code === 'HPE_INVALID_HEADER_TOKEN' ||
 
                     (reason.response || {}).status === 501 ||
                     (reason.response || {}).status === 400 ||
@@ -201,12 +214,15 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
                     (reason.response || {}).status === 503 ||
                     (reason.response || {}).status === 504)
             ) {
-                console.log('Discard proxy', proxy.key, 'for:', reason.message);
-                proxies.bad[proxy.key] = proxy;
-                delete proxies.good[proxy.key];
-                saveProxies();
+                debug('Discard proxy', proxy.key, 'for:', reason.message);
+
+                updateProxy(proxy.key, {$inc: {badHits: 1}});
+                // moveToBadProxy(proxy.key);
+                //
+                // saveProxies();
                 reTry = true;
-                // } else if (
+            } else if (
+                !proxy
                 //     reason.message.indexOf('timeout of ') !== -1 ||
                 //     reason.message.indexOf('error request aborted ') !== -1 ||
                 //     reason.code === 'ERR_REQUEST_ABORTED' ||
@@ -214,9 +230,9 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
                 //     (reason.response || {}).status === 502 ||
                 //     (reason.response || {}).status === 503 ||
                 //     (reason.response || {}).status === 504
-                // ) {
-                //     console.log('Failed with proxy', proxy.key, reason.message, ', retry');
-                //     reTry = true;
+            ) {
+                //     debug('Failed with proxy', proxy.key, reason.message, ', retry');
+                reTry = true;
             } else {
                 return errorHandler(reason);
             }
@@ -228,13 +244,16 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
             await delay(1000);
         }
     } while (reTry)
-    // await delay(5000 + Math.random() * 1000);
 
     let $;
 
     if (response.data) {
         $ = cheerio.load(response.data);
         processHtml($, outResults, listSelector || ($ => $.root()), itemHandler);
+        if (proxy) {
+            updateProxy(proxy.key, {$inc: {goodHits: 1, scUpTime: ((Date.now() - init) / 1000)}});
+            saveProxies();
+        }
     }
     return {$, response};
 }
@@ -243,10 +262,37 @@ function processHtml($, outResults, listSelector, itemHandler) {
     const items = listSelector($);
     for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        itemHandler.call(this, $, $(item), outResults, i);
+        itemHandler($, $(item), outResults, i, items);
     }
 
     return outResults;
 }
 
+setInterval(() => {
+    let found = false;
+    for (const [key, proxy] of Object.entries(proxies.good)) {
+        if (typeof proxy.badHits !== "undefined" && (proxy.goodHits >= proxy.badHits) !== true && Math.random() >= 0.9) {
+            moveToBadProxy(key);
+            found = true;
+        }
+    }
+    for (const [key, proxy] of Object.entries(proxies.bad)) {
+        if (proxy.goodHits >= proxy.badHits || (typeof proxy.goodHits !== "undefined" && Math.random() < 0.1)) {
+            moveToGoodProxy(key);
+            found = true;
+        }
+    }
+    const randomIp = `${1 + Math.round(Math.random() * 254)}.${1 + Math.round(Math.random() * 254)}.${1 + Math.round(Math.random() * 254)}.${1 + Math.round(Math.random() * 254)}`;
+    const ports = ['80', '443', '1080', '8080'];
+    const proxy = {
+        ip: randomIp,
+        port: ports[Math.round(Math.random() * (ports.length - 1))],
+        protocols: ['https'],
+        isRandom: true,
+    }
+    addProxy(proxy);
+    if (found) {
+        saveProxies();
+    }
+}, 5000);
 module.exports.requestAndProcessPage = requestAndProcessPage;
