@@ -175,7 +175,7 @@ function getRandomProxyKey() {
 }
 
 async function requestAndProcessPage(url, options, outResults, listSelector, itemHandler, errorHandler, skipProxy = false) {
-    const init = Date.now();
+    let init;
     let proxy, httpAgent, httpsAgent;
     let reTry = false;
 
@@ -185,6 +185,7 @@ async function requestAndProcessPage(url, options, outResults, listSelector, ite
         if (!skipProxy) {
             ({proxy, httpAgent, httpsAgent} = await getNextProxy());
         }
+        init = Date.now();
         response = await axios.get(url, {
             ...options,
             proxy: !skipProxy ? {
@@ -337,7 +338,7 @@ setInterval((() => {
                 }
             }
 
-            if (threshold && score < threshold && Math.random() >= 0.0) {
+            if (threshold && score < threshold && Math.random() >= 0.95) {
                 moveToBadProxy(key);
                 found = true;
             }
