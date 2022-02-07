@@ -334,7 +334,6 @@ setInterval((() => {
                         biasedMaxDelta = maxHitDelta + Math.abs(minHitDelta);
                     }
                     score = proxy.goodHits / maxGoodHits * 0.5 + biasedDelta / biasedMaxDelta * 0.5;
-                    updateProxy(key, {$set: {score: score}});
                 }
             }
 
@@ -358,7 +357,6 @@ setInterval((() => {
                         biasedMaxDelta = maxHitDelta + Math.abs(minHitDelta);
                     }
                     score = proxy.goodHits / maxGoodHits * 0.5 + biasedDelta / biasedMaxDelta * 0.5;
-                    updateProxy(key, {$set: {score: score}});
                 }
             }
 
