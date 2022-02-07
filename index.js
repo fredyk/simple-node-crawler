@@ -147,7 +147,11 @@ function saveProxies() {
         return setTimeout(saveProxies, 67);
     }
     saving = true;
-    fs.writeFileSync("data/known_proxies.json", JSON.stringify(proxies, null, 2), {encoding: "utf-8"});
+    try {
+        fs.writeFileSync("data/known_proxies.json", JSON.stringify(proxies, null, 2), {encoding: "utf-8"});
+    } catch (e) {
+        console.error(e);
+    }
     saving = false;
 }
 
@@ -268,31 +272,93 @@ function processHtml($, outResults, listSelector, itemHandler) {
     return outResults;
 }
 
-setInterval(() => {
-    let found = false;
-    for (const [key, proxy] of Object.entries(proxies.good)) {
-        if (typeof proxy.badHits !== "undefined" && !(proxy.goodHits >= proxy.badHits) && Math.random() >= 0.9) {
-            moveToBadProxy(key);
-            found = true;
+setInterval((() => {
+    let maxGoodHits = 0;
+    let minHitDelta = 0;
+    let maxHitDelta = 0;
+    let avgScore = 0;
+    return () => {
+        let found = false;
+        let localMaxGoodHits = 0;
+        let localMinHitDelta = 1e6;
+        let localMaxHitDelta = -1e6;
+        let localAvgScore = 0;
+        let countForAvgScore = 0;
+        for (const [key, proxy] of Object.entries(proxies.good)) {
+
+            let score = 0;
+            if (proxy.goodHits) {
+                localMaxGoodHits = Math.max(localMaxGoodHits, proxy.goodHits);
+                let hitDelta = 0;
+                if (typeof proxy.badHits !== "undefined") {
+                    hitDelta = proxy.goodHits - proxy.badHits;
+                    localMinHitDelta = Math.min(localMinHitDelta, hitDelta);
+                    localMaxHitDelta = Math.max(localMaxHitDelta, hitDelta);
+                }
+                if (maxGoodHits && minHitDelta && maxHitDelta) {
+                    let biasedDelta = hitDelta;
+                    let biasedMaxDelta = maxHitDelta;
+                    if (minHitDelta < 0) {
+                        biasedDelta = hitDelta + Math.abs(minHitDelta);
+                        biasedMaxDelta = maxHitDelta + Math.abs(minHitDelta);
+                    }
+                    score = proxy.goodHits / maxGoodHits * 0.5 + biasedDelta / biasedMaxDelta * 0.5;
+                    updateProxy(key, {$set: {score: score}});
+                    countForAvgScore++;
+                    localAvgScore = (localAvgScore * (countForAvgScore - 1) + score) / countForAvgScore;
+                }
+            }
+
+            if (avgScore && score < avgScore && Math.random() >= 0.9) {
+                moveToBadProxy(key);
+                found = true;
+            }
         }
-    }
-    for (const [key, proxy] of Object.entries(proxies.bad)) {
-        if (proxy.goodHits >= proxy.badHits || (typeof proxy.goodHits !== "undefined" && Math.random() < 0.1)) {
-            moveToGoodProxy(key);
-            found = true;
+        maxGoodHits = localMaxGoodHits;
+        minHitDelta = localMinHitDelta;
+        maxHitDelta = localMaxHitDelta;
+        avgScore = localAvgScore;
+        for (const [key, proxy] of Object.entries(proxies.bad)) {
+
+            let score = 0;
+
+            let hitDelta = 0;
+            if (typeof proxy.goodHits !== "undefined" && typeof proxy.badHits !== "undefined") {
+                hitDelta = proxy.goodHits - proxy.badHits;
+                localMinHitDelta = Math.min(localMinHitDelta, hitDelta);
+                localMaxHitDelta = Math.max(localMaxHitDelta, hitDelta);
+                if (maxGoodHits && minHitDelta && maxHitDelta) {
+                    let biasedDelta = hitDelta;
+                    let biasedMaxDelta = maxHitDelta;
+                    if (minHitDelta < 0) {
+                        biasedDelta = hitDelta + Math.abs(minHitDelta);
+                        biasedMaxDelta = maxHitDelta + Math.abs(minHitDelta);
+                    }
+                    score = proxy.goodHits / maxGoodHits * 0.5 + biasedDelta / biasedMaxDelta * 0.5;
+                    updateProxy(key, {$set: {score: score}});
+                }
+            }
+
+            if (avgScore && score >= avgScore || typeof proxy.goodHits !== "undefined" && Math.random() < 0.001) {
+                moveToGoodProxy(key);
+                found = true;
+            }
         }
-    }
-    const randomIp = `${1 + Math.round(Math.random() * 254)}.${1 + Math.round(Math.random() * 254)}.${1 + Math.round(Math.random() * 254)}.${1 + Math.round(Math.random() * 254)}`;
-    const ports = ['80', '443', '1080', '8080'];
-    const proxy = {
-        ip: randomIp,
-        port: ports[Math.round(Math.random() * (ports.length - 1))],
-        protocols: ['https'],
-        isRandom: true,
-    }
-    addProxy(proxy);
-    if (found) {
-        saveProxies();
-    }
-}, 5000);
+
+        if (Math.random() >= 0.999) {
+            const randomIp = `${1 + Math.round(Math.random() * 254)}.${1 + Math.round(Math.random() * 254)}.${1 + Math.round(Math.random() * 254)}.${1 + Math.round(Math.random() * 254)}`;
+            const ports = ['80', '443', '1080', '8080'];
+            const proxy = {
+                ip: randomIp,
+                port: ports[Math.round(Math.random() * (ports.length - 1))],
+                protocols: ['https'],
+                isRandom: true,
+            }
+            addProxy(proxy);
+        }
+        if (found) {
+            saveProxies();
+        }
+    };
+})(), 5000);
 module.exports.requestAndProcessPage = requestAndProcessPage;
