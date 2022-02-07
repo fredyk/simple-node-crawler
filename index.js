@@ -271,7 +271,7 @@ function processHtml($, outResults, listSelector, itemHandler) {
 setInterval(() => {
     let found = false;
     for (const [key, proxy] of Object.entries(proxies.good)) {
-        if (typeof proxy.badHits !== "undefined" && (proxy.goodHits >= proxy.badHits) !== true && Math.random() >= 0.9) {
+        if (typeof proxy.badHits !== "undefined" && !(proxy.goodHits >= proxy.badHits) && Math.random() >= 0.9) {
             moveToBadProxy(key);
             found = true;
         }
