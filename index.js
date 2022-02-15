@@ -93,58 +93,201 @@ function moveToGoodProxy(proxyKey) {
     }
 }
 
-async function getProxies() {
-    debug('Requesting new proxies');
+function create() {
+
+    async function getProxies() {
+        debug('Requesting new proxies');
 
 
-    let page = 1;
-    let data, total, limit;
-    do {
-        // // const response = await axios.get("https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=socks5", {
-        const response = await getAxios().get(`https://proxylist.geonode.com/api/proxy-list?limit=50&page=${page}&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=https`, {
-            // // const response = await axios.get("https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=http%2Chttps", {
-            json: true,
-        }).catch(reason => {
-            console.log('ERROR while getting PROXY page', page, ':', reason.code, reason.message);
-            return {error: reason};
-        });
+        let page = 1;
+        let data, total, limit;
+        do {
+            // // const response = await axios.get("https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=socks5", {
+            const response = await getAxios().get(`https://proxylist.geonode.com/api/proxy-list?limit=50&page=${page}&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=https`, {
+                // // const response = await axios.get("https://proxylist.geonode.com/api/proxy-list?limit=50&page=1&sort_by=lastChecked&sort_type=desc&filterLastChecked=50&protocols=http%2Chttps", {
+                json: true,
+            }).catch(reason => {
+                console.log('ERROR while getting PROXY page', page, ':', reason.code, reason.message);
+                return {error: reason};
+            });
 
-        data = [];
-        if (response && response.data) {
+            data = [];
+            if (response && response.data) {
 
-            ({data, total/*, page*/, limit} = response.data);
-            for (let i = 0; i < data.length; i++) {
-                const proxyData = data[i];
-                addProxy(proxyData);
+                ({data, total/*, page*/, limit} = response.data);
+                for (let i = 0; i < data.length; i++) {
+                    const proxyData = data[i];
+                    addProxy(proxyData);
+                }
             }
+            page++;
+        } while (data.length >= 50)
+
+        await self.requestAndProcessPage('https://free-proxy-list.net/', {}, proxies, $ => $('#list > div > div.table-responsive > div > table > tbody > tr'),
+            function ($, listItem$, _, index) {
+
+                const ip$ = listItem$.find('td:nth-child(1)');
+                const port$ = listItem$.find('td:nth-child(2)');
+                const https$ = listItem$.find('td:nth-child(7)');
+
+                const ip = ip$.text().trim();
+                const port = port$.text().trim();
+                const https = https$.text().trim();
+
+                if (https === 'yes') {
+                    let proxy = {
+                        ip,
+                        port,
+                        protocols: ['https'],
+                    };
+                    addProxy(proxy);
+                }
+
+            }, reason => {
+                console.error(reason);
+            }, true)
+
+    }
+    async function getNextProxy() {
+        if (Object.keys(proxies.good).length < 4) {
+            await getProxies();
         }
-        page++;
-    } while (data.length >= 50)
+        let proxy;
+        do {
+            let currentProxy = getRandomProxyKey();
+            proxy = proxies.good[currentProxy];
+            if (proxy) {
+                return {proxy: proxy};
+            }
+        } while (!proxy)
+    }
 
-    await requestAndProcessPage('https://free-proxy-list.net/', {}, proxies, $ => $('#list > div > div.table-responsive > div > table > tbody > tr'),
-        function ($, listItem$, _, index) {
+    const self = {
+        /**
+         *
+         * @param method
+         * @param url
+         * @param [data]
+         * @param options
+         * @param skipProxy
+         * @returns {Promise<{init: number, proxy, response: *}>}
+         */
+        async requestWithProxy(method = 'get', url, data = undefined, options, skipProxy = false) {
 
-            const ip$ = listItem$.find('td:nth-child(1)');
-            const port$ = listItem$.find('td:nth-child(2)');
-            const https$ = listItem$.find('td:nth-child(7)');
-
-            const ip = ip$.text().trim();
-            const port = port$.text().trim();
-            const https = https$.text().trim();
-
-            if (https === 'yes') {
-                let proxy = {
-                    ip,
-                    port,
-                    protocols: ['https'],
-                };
-                addProxy(proxy);
+            method = method.toLowerCase();
+            if (['get', 'head', 'options', 'delete'].includes(method)) {
+                skipProxy = options;
+                options = data;
+                data = undefined;
             }
 
-        }, reason => {
-            console.error(reason);
-        }, true)
+            let init;
+            let proxy, httpAgent, httpsAgent;
+            let reTry = false;
 
+            let response;
+            do {
+                reTry = false;
+                if (!skipProxy) {
+                    ({proxy, httpAgent, httpsAgent} = await getNextProxy());
+                }
+                init = Date.now();
+                try {
+                    response = await getAxios().request({
+                        method: method,
+                        url,
+                        data,
+                        ...options,
+                        proxy: !skipProxy ? {
+                            protocol: proxy.protocols[0],
+                            host: proxy.ip,
+                            port: proxy.port,
+                        } : undefined,
+                        timeout: 30000,
+                    });
+                } catch (reason) {
+                    if (
+                        proxy && (
+                            reason.message.indexOf(':SSL ') !== -1 ||
+                            reason.code === 'ETIMEDOUT' ||
+                            reason.code === 'ECONNREFUSED' ||
+                            reason.code === 'ECONNRESET' ||
+                            reason.code === 'ECONNABORTED' ||
+                            reason.code === 'EADDRNOTAVAIL' ||
+                            reason.code === 'ENETUNREACH' ||
+                            reason.code === 'EAI_AGAIN' ||
+                            reason.code === 'HPE_INVALID_CONSTANT' ||
+                            reason.code === 'HPE_INVALID_HEADER_TOKEN' ||
+
+                            (reason.response || {}).status === 501 ||
+                            // (reason.response || {}).status === 400 ||
+                            // (reason.response || {}).status === 403 ||
+                            // (reason.response || {}).status === 404 ||
+
+                            reason.message.indexOf('timeout of ') !== -1 ||
+                            reason.message.indexOf('error request aborted ') !== -1 ||
+                            reason.code === 'ERR_REQUEST_ABORTED' ||
+                            (reason.response || {}).status === 500 ||
+                            (reason.response || {}).status === 502 ||
+                            (reason.response || {}).status === 503 ||
+                            (reason.response || {}).status === 504)
+                    ) {
+                        debug('Discard proxy', proxy.key, 'for:', reason.message);
+
+                        updateProxy(proxy.key, {$inc: {badHits: 1}});
+                        // moveToBadProxy(proxy.key);
+                        //
+                        // saveProxies();
+                        reTry = true;
+                    } else if (
+                        !proxy && !(reason.response || {}).status > 0
+                        //     reason.message.indexOf('timeout of ') !== -1 ||
+                        //     reason.message.indexOf('error request aborted ') !== -1 ||
+                        //     reason.code === 'ERR_REQUEST_ABORTED' ||
+                        //     (reason.response || {}).status === 500 ||
+                        //     (reason.response || {}).status === 502 ||
+                        //     (reason.response || {}).status === 503 ||
+                        //     (reason.response || {}).status === 504
+                    ) {
+                        //     debug('Failed with proxy', proxy.key, reason.message, ', retry');
+                        reTry = true;
+                    } else {
+                        throw reason;
+                    }
+                }
+                if (response && (response.data || '').startsWith && (response.data || '').startsWith('<pre>Array')) {
+                    reTry = true;
+                }
+                if (reTry) {
+                    await delay(1000);
+                }
+            } while (reTry)
+            return {init, proxy, response};
+        },
+
+        async requestAndProcessPage(url, options, outResults, listSelector, itemHandler, errorHandler, skipProxy = false, data = undefined) {
+            let {init, proxy, response} = await this.requestWithProxy('get', url, options, skipProxy).catch(e => errorHandler(e));
+
+            let $;
+
+            if (response.data) {
+                $ = cheerio.load(response.data);
+                processHtml($, outResults, listSelector || ($ => $.root()), itemHandler);
+                if (proxy) {
+                    updateProxy(proxy.key, {$inc: {goodHits: 1, scUpTime: ((Date.now() - init) / 1000)}});
+                    saveProxies();
+                }
+            }
+            return {$, response};
+        },
+
+        useAxios: (axios) => {
+            globalAxios = axios;
+        },
+        // requestAndProcessPage,
+        // requestWithProxy,
+    };
+    return self
 }
 
 let saving = false;
@@ -162,141 +305,9 @@ function saveProxies() {
     saving = false;
 }
 
-async function getNextProxy() {
-    if (Object.keys(proxies.good).length < 4) {
-        await getProxies();
-    }
-    let proxy;
-    do {
-        let currentProxy = getRandomProxyKey();
-        proxy = proxies.good[currentProxy];
-        if (proxy) {
-            return {proxy: proxy};
-        }
-    } while (!proxy)
-}
-
 function getRandomProxyKey() {
     let randomIndex = Math.floor(Math.random() * Object.keys(proxies.good).length);
     return Object.keys(proxies.good)[randomIndex];
-}
-
-/**
- *
- * @param method
- * @param url
- * @param [data]
- * @param options
- * @param skipProxy
- * @returns {Promise<{init: number, proxy, response: *}>}
- */
-async function requestWithProxy(method = 'get', url, data = undefined, options, skipProxy = false) {
-
-    method = method.toLowerCase();
-    if (['get', 'head', 'options', 'delete'].includes(method)) {
-        skipProxy = options;
-        options = data;
-        data = undefined;
-    }
-
-    let init;
-    let proxy, httpAgent, httpsAgent;
-    let reTry = false;
-
-    let response;
-    do {
-        reTry = false;
-        if (!skipProxy) {
-            ({proxy, httpAgent, httpsAgent} = await getNextProxy());
-        }
-        init = Date.now();
-        try {
-            response = await getAxios().request({
-                method: method,
-                url,
-                data,
-                ...options,
-                proxy: !skipProxy ? {
-                    protocol: proxy.protocols[0],
-                    host: proxy.ip,
-                    port: proxy.port,
-                } : undefined,
-                timeout: 30000,
-            });
-        } catch (reason) {
-            if (
-                proxy && (
-                    reason.message.indexOf(':SSL ') !== -1 ||
-                    reason.code === 'ETIMEDOUT' ||
-                    reason.code === 'ECONNREFUSED' ||
-                    reason.code === 'ECONNRESET' ||
-                    reason.code === 'ECONNABORTED' ||
-                    reason.code === 'EADDRNOTAVAIL' ||
-                    reason.code === 'ENETUNREACH' ||
-                    reason.code === 'EAI_AGAIN' ||
-                    reason.code === 'HPE_INVALID_CONSTANT' ||
-                    reason.code === 'HPE_INVALID_HEADER_TOKEN' ||
-
-                    (reason.response || {}).status === 501 ||
-                    // (reason.response || {}).status === 400 ||
-                    // (reason.response || {}).status === 403 ||
-                    // (reason.response || {}).status === 404 ||
-
-                    reason.message.indexOf('timeout of ') !== -1 ||
-                    reason.message.indexOf('error request aborted ') !== -1 ||
-                    reason.code === 'ERR_REQUEST_ABORTED' ||
-                    (reason.response || {}).status === 500 ||
-                    (reason.response || {}).status === 502 ||
-                    (reason.response || {}).status === 503 ||
-                    (reason.response || {}).status === 504)
-            ) {
-                debug('Discard proxy', proxy.key, 'for:', reason.message);
-
-                updateProxy(proxy.key, {$inc: {badHits: 1}});
-                // moveToBadProxy(proxy.key);
-                //
-                // saveProxies();
-                reTry = true;
-            } else if (
-                !proxy && !(reason.response || {}).status > 0
-                //     reason.message.indexOf('timeout of ') !== -1 ||
-                //     reason.message.indexOf('error request aborted ') !== -1 ||
-                //     reason.code === 'ERR_REQUEST_ABORTED' ||
-                //     (reason.response || {}).status === 500 ||
-                //     (reason.response || {}).status === 502 ||
-                //     (reason.response || {}).status === 503 ||
-                //     (reason.response || {}).status === 504
-            ) {
-                //     debug('Failed with proxy', proxy.key, reason.message, ', retry');
-                reTry = true;
-            } else {
-                throw reason;
-            }
-        }
-        if (response && (response.data || '').startsWith && (response.data || '').startsWith('<pre>Array')) {
-            reTry = true;
-        }
-        if (reTry) {
-            await delay(1000);
-        }
-    } while (reTry)
-    return {init, proxy, response};
-}
-
-async function requestAndProcessPage(url, options, outResults, listSelector, itemHandler, errorHandler, skipProxy = false, data = undefined) {
-    let {init, proxy, response} = await requestWithProxy('get', url, options, skipProxy).catch(e => errorHandler(e));
-
-    let $;
-
-    if (response.data) {
-        $ = cheerio.load(response.data);
-        processHtml($, outResults, listSelector || ($ => $.root()), itemHandler);
-        if (proxy) {
-            updateProxy(proxy.key, {$inc: {goodHits: 1, scUpTime: ((Date.now() - init) / 1000)}});
-            saveProxies();
-        }
-    }
-    return {$, response};
 }
 
 function processHtml($, outResults, listSelector, itemHandler) {
@@ -418,10 +429,10 @@ setInterval((() => {
         }
     };
 })(), 5000);
+
+const defaultInstance = create()
+
 module.exports = {
-    useAxios: (axios) => {
-        globalAxios = axios;
-    },
-    requestAndProcessPage,
-    requestWithProxy,
+    create,
+    default: defaultInstance,
 };
