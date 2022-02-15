@@ -266,11 +266,11 @@ function create() {
         },
 
         async requestAndProcessPage(url, options, outResults, listSelector, itemHandler, errorHandler, skipProxy = false, data = undefined) {
-            let {init, proxy, response} = await this.requestWithProxy('get', url, options, skipProxy).catch(e => errorHandler(e));
+            let {init, proxy, response, error} = await this.requestWithProxy('get', url, options, skipProxy).catch(e => errorHandler(e));
 
             let $;
 
-            if (response.data) {
+            if (response && response.data) {
                 $ = cheerio.load(response.data);
                 processHtml($, outResults, listSelector || ($ => $.root()), itemHandler);
                 if (proxy) {
